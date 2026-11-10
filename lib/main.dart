@@ -40,13 +40,21 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _index = 0;
+  ToolsFocus? _toolsFocus;
 
   late final List<Widget> _pages = [
-    HomeScreen(onOpen: (i) => setState(() => _index = i)),
+    HomeScreen(onOpen: _open),
     const AverageCostScreen(),
     const TpSlScreen(),
-    const ToolsScreen(),
+    ToolsScreen(focus: _toolsFocus),
   ];
+
+  void _open(int index, {ToolsFocus? focus}) {
+    setState(() {
+      _index = index;
+      if (index == 3) _toolsFocus = focus;
+    });
+  }
 
   @override
   void initState() {

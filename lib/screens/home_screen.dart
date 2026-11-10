@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import 'privacy_policy_screen.dart';
+import 'tools_screen.dart';
 
 /// 首页：应用简介 + 各工具的快捷入口。
 class HomeScreen extends StatelessWidget {
-  final ValueChanged<int> onOpen;
+  final void Function(int index, {ToolsFocus? focus}) onOpen;
 
   const HomeScreen({super.key, required this.onOpen});
 
@@ -42,7 +43,7 @@ class HomeScreen extends StatelessWidget {
                   icon: Icons.receipt_long,
                   title: 'Profit / Loss',
                   subtitle: 'Single-trade P&L',
-                  onTap: () => onOpen(3),
+                  onTap: () => onOpen(3, focus: ToolsFocus.pnl),
                 ),
               ),
             ],
@@ -55,7 +56,7 @@ class HomeScreen extends StatelessWidget {
                   icon: Icons.shield_outlined,
                   title: 'Position Sizing',
                   subtitle: 'Risk-based sizing',
-                  onTap: () => onOpen(3),
+                  onTap: () => onOpen(3, focus: ToolsFocus.sizing),
                 ),
               ),
             ],

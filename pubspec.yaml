@@ -2,7 +2,7 @@ name: coinaozx_fs
 description: "Local-first trading calculators for average cost, take-profit/stop-loss, profit/loss and position sizing across stocks, crypto and tokens."
 publish_to: 'none'
 
-version: 1.0.1+2
+version: 1.0.1+3
 
 environment:
   sdk: ^3.13.5

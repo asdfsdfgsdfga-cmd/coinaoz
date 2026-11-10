@@ -5,16 +5,64 @@ import '../core/formatting.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
+/// Tools 页聚焦位置：从首页卡片跳入时滚动到对应计算器。
+enum ToolsFocus { pnl, sizing }
+
 /// 工具页：盈亏计算、仓位管理、关于。
-class ToolsScreen extends StatelessWidget {
-  const ToolsScreen({super.key});
+class ToolsScreen extends StatefulWidget {
+  final ToolsFocus? focus;
+  const ToolsScreen({super.key, this.focus});
+
+  @override
+  State<ToolsScreen> createState() => _ToolsScreenState();
+}
+
+class _ToolsScreenState extends State<ToolsScreen> {
+  final _scroll = ScrollController();
+  final _pnlKey = GlobalKey();
+  final _sizingKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+  }
+
+  @override
+  void didUpdateWidget(covariant ToolsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.focus != oldWidget.focus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFocus() {
+    final focus = widget.focus;
+    if (focus == null) return;
+    final key = focus == ToolsFocus.pnl ? _pnlKey : _sizingKey;
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.08,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListView(
+      controller: _scroll,
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-      children: const [
-        Padding(
+      children: [
+        const Padding(
           padding: EdgeInsets.only(bottom: 16),
           child: Text(
             'Tools',
@@ -25,11 +73,11 @@ class ToolsScreen extends StatelessWidget {
             ),
           ),
         ),
-        ProfitLossCard(),
-        SizedBox(height: 16),
-        PositionSizeCard(),
-        SizedBox(height: 16),
-        AboutCard(),
+        ProfitLossCard(key: _pnlKey),
+        const SizedBox(height: 16),
+        PositionSizeCard(key: _sizingKey),
+        const SizedBox(height: 16),
+        const AboutCard(),
       ],
     );
   }
