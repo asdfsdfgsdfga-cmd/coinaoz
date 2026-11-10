@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/agreement.dart';
 import '../theme.dart';
 import 'privacy_policy_screen.dart';
 
@@ -59,15 +58,6 @@ class HomeScreen extends StatelessWidget {
                   onTap: () => onOpen(3),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _ToolCard(
-                  icon: Icons.balance,
-                  title: 'Risk / Reward',
-                  subtitle: 'Decision support',
-                  onTap: () => onOpen(2),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 24),
@@ -75,11 +65,7 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Center(
             child: TextButton(
-              onPressed: () => PrivacyPolicyScreen.open(
-                context,
-                url: AppAgreement.privacyUrl,
-                title: AppAgreement.privacyTitle,
-              ),
+              onPressed: () => PrivacyPolicyScreen.open(context),
               child: Text(
                 'Privacy Policy',
                 style: TextStyle(

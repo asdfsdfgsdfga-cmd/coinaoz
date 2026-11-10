@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/calculations.dart';
 import '../core/formatting.dart';
+import '../core/position.dart';
+import '../core/positions_store.dart';
+import '../core/reminder_service.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'positions_screen.dart';
 
-/// 平均成本计算器。
+/// 平均成本计算器：编辑当前选中的本地持仓。
 class AverageCostScreen extends StatefulWidget {
   const AverageCostScreen({super.key});
 
@@ -16,12 +21,15 @@ class AverageCostScreen extends StatefulWidget {
 }
 
 class _AverageCostScreenState extends State<AverageCostScreen> {
-  static const _prefsKey = 'avg_cost_asset';
+  static const _selectedKey = 'avg_cost_selected';
 
-  AssetType _assetType = AssetType.crypto;
+  List<Position> _positions = [];
+  Position? _active;
+
   final _assetName = TextEditingController();
   final _currentPrice = TextEditingController();
-  final List<Transaction> _transactions = [];
+  final _tpTarget = TextEditingController();
+  final _slTarget = TextEditingController();
 
   @override
   void initState() {
@@ -29,52 +37,125 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_prefsKey);
-    if (raw == null) return;
-    try {
-      // 用简单分隔符存储：type|name|currentPrice|price,qty;price,qty;...
-      final parts = raw.split('|');
-      final typeIndex = int.tryParse(parts[0]) ?? 2;
-      final safeTypeIndex =
-          (typeIndex < 0 || typeIndex >= AssetType.values.length) ? 2 : typeIndex;
-      final name = parts.length > 1 ? parts[1] : '';
-      final current = parts.length > 2 ? parts[2] : '';
-      final txsRaw = parts.length > 3 ? parts[3] : '';
-      if (!mounted) return;
-      setState(() {
-        _assetType = AssetType.values[safeTypeIndex];
-        _assetName.text = name;
-        _currentPrice.text = current;
-        _transactions.clear();
-        if (txsRaw.isNotEmpty) {
-          for (final chunk in txsRaw.split(';')) {
-            final kv = chunk.split(',');
-            if (kv.length >= 2) {
-              final p = double.tryParse(kv[0]);
-              final q = double.tryParse(kv[1]);
-              if (p != null && q != null) {
-                _transactions.add(Transaction(price: p, quantity: q));
-              }
-            }
-          }
-        }
-      });
-    } catch (_) {
-      // 忽略损坏数据
-    }
+  @override
+  void dispose() {
+    _assetName.dispose();
+    _currentPrice.dispose();
+    _tpTarget.dispose();
+    _slTarget.dispose();
+    super.dispose();
   }
 
-  Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    final txs = _transactions
-        .map((t) => '${t.price},${t.quantity}')
-        .join(';');
-    await prefs.setString(
-      _prefsKey,
-      '${_assetType.index}|${_assetName.text}|${_currentPrice.text}|$txs',
+  Future<void> _load() async {
+    _positions = await PositionsStore.load();
+    if (_positions.isEmpty) {
+      _active = PositionsStore.createBlank();
+      _positions = [_active!];
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final selectedId = prefs.getString(_selectedKey);
+      _active = _positions.firstWhere(
+        (p) => p.id == selectedId,
+        orElse: () => _positions.first,
+      );
+    }
+    _syncControllers();
+    await _persist();
+    if (mounted) setState(() {});
+  }
+
+  void _syncControllers() {
+    final a = _active;
+    if (a == null) return;
+    _assetName.text = a.name;
+    _currentPrice.text = a.currentPrice == null ? '' : a.currentPrice.toString();
+    _tpTarget.text = a.takeProfitTarget == null ? '' : a.takeProfitTarget.toString();
+    _slTarget.text = a.stopLossTarget == null ? '' : a.stopLossTarget.toString();
+  }
+
+  /// 把控制器与交易记录回写到当前持仓并落盘。
+  Future<void> _persist() async {
+    final a = _active;
+    if (a == null) return;
+    final current = double.tryParse(_currentPrice.text.trim());
+    final tp = double.tryParse(_tpTarget.text.trim());
+    final sl = double.tryParse(_slTarget.text.trim());
+    final updated = Position(
+      id: a.id,
+      type: a.type,
+      name: _assetName.text.trim(),
+      transactions: a.transactions,
+      currentPrice: current,
+      takeProfitTarget: tp,
+      stopLossTarget: sl,
+      reminderAt: a.reminderAt,
+      updatedAt: DateTime.now(),
     );
+    final index = _positions.indexWhere((p) => p.id == a.id);
+    if (index >= 0) {
+      _positions[index] = updated;
+    } else {
+      _positions.add(updated);
+    }
+    _active = updated;
+    await PositionsStore.save(_positions);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_selectedKey, updated.id);
+    await ReminderService.instance.sync(updated);
+  }
+
+  Future<void> _pickReminder() async {
+    final a = _active;
+    if (a == null) return;
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: a.reminderAt ?? now,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(a.reminderAt ?? now),
+    );
+    if (time == null || !mounted) return;
+    final when = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    setState(() => _active = a.copyWith(reminderAt: when));
+    await _persist();
+  }
+
+  Future<void> _clearReminder() async {
+    final a = _active;
+    if (a == null) return;
+    setState(() => _active = Position(
+      id: a.id,
+      type: a.type,
+      name: a.name,
+      transactions: a.transactions,
+      currentPrice: a.currentPrice,
+      takeProfitTarget: a.takeProfitTarget,
+      stopLossTarget: a.stopLossTarget,
+      reminderAt: null,
+      updatedAt: DateTime.now(),
+    ));
+    await _persist();
+  }
+
+  Future<void> _openPositions() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PositionsScreen(
+          onSelected: (position) async {
+            setState(() => _active = position);
+            _syncControllers();
+            await _persist();
+            if (mounted) Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _addTransaction() {
@@ -117,7 +198,7 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
               ),
               const SizedBox(height: 14),
               NumberField(
-                label: 'Quantity (${_assetType.unitLabel})',
+                label: 'Quantity (${_active!.type.unitLabel})',
                 controller: qtyCtl,
               ),
               const SizedBox(height: 20),
@@ -131,10 +212,9 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
                     );
                     return;
                   }
-                  setState(() {
-                    _transactions.add(Transaction(price: p, quantity: q));
-                  });
-                  _save();
+                  setState(() => _active!.transactions
+                      .add(Transaction(price: p, quantity: q, time: DateTime.now())));
+                  _persist();
                   Navigator.of(ctx).pop();
                 },
                 child: const Text('Add'),
@@ -147,14 +227,15 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
   }
 
   void _clearAll() {
-    if (_transactions.isEmpty) return;
+    final a = _active;
+    if (a == null || a.transactions.isEmpty) return;
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Clear Records'),
-        content: const Text('Delete all buy records?'),
+        content: const Text('Delete all buy records for this position?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
@@ -163,10 +244,10 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
           TextButton(
             onPressed: () {
               setState(() {
-                _transactions.clear();
+                _active!.transactions.clear();
                 _currentPrice.clear();
               });
-              _save();
+              _persist();
               Navigator.of(ctx).pop();
             },
             child: const Text('Clear', style: TextStyle(color: AppTheme.loss)),
@@ -177,17 +258,14 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
   }
 
   @override
-  void dispose() {
-    _assetName.dispose();
-    _currentPrice.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final result = calcAverageCost(_transactions);
-    final currentPrice = double.tryParse(_currentPrice.text.trim());
-    final hasData = _transactions.isNotEmpty;
+    final a = _active;
+    if (a == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final result = a.result;
+    final currentPrice = a.currentPrice;
+    final hasData = a.transactions.isNotEmpty;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
@@ -204,6 +282,11 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
                 ),
               ),
             ),
+            IconButton(
+              tooltip: 'Positions',
+              onPressed: _openPositions,
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+            ),
             if (hasData)
               IconButton(
                 onPressed: _clearAll,
@@ -213,130 +296,156 @@ class _AverageCostScreenState extends State<AverageCostScreen> {
           ],
         ),
         const SizedBox(height: 8),
+
         // 资产类型
         const _Label('Asset Type'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: AssetType.values.map((t) {
-              final selected = t == _assetType;
-              return ChoiceChip(
-                label: Text(t.label),
-                avatar: Icon(
-                  t.icon,
-                  size: 16,
-                  color: selected ? AppTheme.accent : Colors.white70,
-                ),
-                selected: selected,
-                onSelected: (_) {
-                  setState(() => _assetType = t);
-                  _save();
-                },
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-          // 资产名称
-          _Label('Asset Name (optional)'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _assetName,
-            onChanged: (_) => _save(),
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(hintText: 'e.g. BTC / AAPL'),
-          ),
-          const SizedBox(height: 20),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: AssetType.values.map((t) {
+            final selected = t == a.type;
+            return ChoiceChip(
+              label: Text(t.label),
+              avatar: Icon(t.icon, size: 16, color: selected ? AppTheme.accent : Colors.white70),
+              selected: selected,
+              onSelected: (_) {
+                setState(() => _active = a.copyWith(type: t));
+                _persist();
+              },
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
 
-          // 结果
-          SectionCard(
-            title: 'Result',
+        // 资产名称
+        const _Label('Asset Name (optional)'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _assetName,
+          onChanged: (_) => _persist(),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(hintText: 'e.g. BTC / AAPL'),
+        ),
+        const SizedBox(height: 20),
+
+        // 结果
+        SectionCard(
+          title: 'Result',
+          child: Column(
+            children: [
+              ResultRow(
+                label: 'Total Cost',
+                value: '\$${Format.money(result.totalCost)}',
+              ),
+              ResultRow(
+                label: 'Total Quantity',
+                value: '${Format.quantity(result.totalQuantity)} ${a.type.unitLabel}',
+              ),
+              const Divider(height: 24),
+              ResultRow(
+                label: 'Average Cost',
+                value: '\$${Format.price(result.averagePrice)}',
+                valueColor: AppTheme.accent,
+                valueSize: 22,
+                emphasize: true,
+              ),
+              if (currentPrice != null && currentPrice > 0 && hasData) ...[
+                const Divider(height: 24),
+                _PnLBlock(
+                  currentPrice: currentPrice,
+                  avgPrice: result.averagePrice,
+                  quantity: result.totalQuantity,
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 当前价格
+        const _Label('Current Price (optional, for P&L)'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _currentPrice,
+          onChanged: (_) {
+            setState(() {});
+            _persist();
+          },
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          decoration: const InputDecoration(
+            prefixText: '\$ ',
+            hintText: '0.00',
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // 目标价
+        SectionCard(
+          title: 'Price Targets (optional)',
+          child: Column(
+            children: [
+              NumberField(
+                label: 'Take-Profit Target',
+                controller: _tpTarget,
+                prefix: '\$ ',
+                onChanged: (_) => _persist(),
+              ),
+              const SizedBox(height: 14),
+              NumberField(
+                label: 'Stop-Loss Target',
+                controller: _slTarget,
+                prefix: '\$ ',
+                onChanged: (_) => _persist(),
+              ),
+              const SizedBox(height: 10),
+              _TargetStatus(position: a),
+              const SizedBox(height: 12),
+              _ReminderRow(
+                reminderAt: a.reminderAt,
+                onPick: _pickReminder,
+                onClear: _clearReminder,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // 买入记录
+        Row(
+          children: [
+            const Expanded(child: _Label('Buy Records')),
+            if (hasData)
+              TextButton.icon(
+                onPressed: _addTransaction,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (!hasData)
+          _EmptyTransactions(onAdd: _addTransaction)
+        else
+          Card(
             child: Column(
               children: [
-                ResultRow(
-                  label: 'Total Cost',
-                  value: '\$${Format.money(result.totalCost)}',
-                ),
-                ResultRow(
-                  label: 'Total Quantity',
-                  value: '${Format.quantity(result.totalQuantity)} ${_assetType.unitLabel}',
-                ),
-                const Divider(height: 24),
-                ResultRow(
-                  label: 'Average Cost',
-                  value: '\$${Format.price(result.averagePrice)}',
-                  valueColor: AppTheme.accent,
-                  valueSize: 22,
-                  emphasize: true,
-                ),
-                if (currentPrice != null && currentPrice > 0 && hasData) ...[
-                  const Divider(height: 24),
-                  _PnLBlock(
-                    currentPrice: currentPrice,
-                    avgPrice: result.averagePrice,
-                    quantity: result.totalQuantity,
+                for (var i = 0; i < a.transactions.length; i++)
+                  _TransactionTile(
+                    index: i,
+                    tx: a.transactions[i],
+                    unit: a.type.unitLabel,
+                    onDelete: () {
+                      setState(() => a.transactions.removeAt(i));
+                      _persist();
+                    },
                   ),
-                ],
               ],
             ),
           ),
-          const SizedBox(height: 16),
-
-          // 当前价格
-          _Label('Current Price (optional, for P&L)'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _currentPrice,
-            onChanged: (_) {
-              setState(() {});
-              _save();
-            },
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-            ],
-            decoration: const InputDecoration(
-              prefixText: '\$ ',
-              hintText: '0.00',
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // 买入记录
-          Row(
-            children: [
-              const Expanded(
-                child: _Label('Buy Records'),
-              ),
-              if (hasData)
-                TextButton.icon(
-                  onPressed: _addTransaction,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add'),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (!hasData)
-            _EmptyTransactions(onAdd: _addTransaction)
-          else
-            Card(
-              child: Column(
-                children: [
-                  for (var i = 0; i < _transactions.length; i++)
-                    _TransactionTile(
-                      index: i,
-                      tx: _transactions[i],
-                      unit: _assetType.unitLabel,
-                      onDelete: () {
-                        setState(() => _transactions.removeAt(i));
-                        _save();
-                      },
-                    ),
-                ],
-              ),
-            ),
-        ],
+      ],
     );
   }
 }
@@ -354,6 +463,120 @@ class _Label extends StatelessWidget {
         fontWeight: FontWeight.w600,
         color: Colors.white.withValues(alpha: 0.7),
       ),
+    );
+  }
+}
+
+class _TargetStatus extends StatelessWidget {
+  final Position position;
+
+  const _TargetStatus({required this.position});
+
+  @override
+  Widget build(BuildContext context) {
+    final current = position.currentPrice;
+    if (current == null) {
+      return Text(
+        'Enter a current price to check target status.',
+        style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.5)),
+      );
+    }
+    final lines = <Widget>[];
+    if (position.takeProfitTarget != null) {
+      final hit = position.tpTargetHit!;
+      lines.add(_StatusLine(
+        icon: hit ? Icons.check_circle : Icons.trending_up,
+        color: AppTheme.profit,
+        text: hit
+            ? 'Take-profit target reached'
+            : 'Take-profit target not reached yet',
+      ));
+    }
+    if (position.stopLossTarget != null) {
+      final hit = position.slTargetHit!;
+      lines.add(_StatusLine(
+        icon: hit ? Icons.check_circle : Icons.trending_down,
+        color: AppTheme.loss,
+        text: hit
+            ? 'Stop-loss target reached'
+            : 'Stop-loss target not reached yet',
+      ));
+    }
+    if (lines.isEmpty) {
+      return Text(
+        'Set a take-profit or stop-loss target above.',
+        style: TextStyle(fontSize: 12.5, color: Colors.white.withValues(alpha: 0.5)),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: lines);
+  }
+}
+
+class _StatusLine extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  const _StatusLine({required this.icon, required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: TextStyle(fontSize: 12.5, color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReminderRow extends StatelessWidget {
+  final DateTime? reminderAt;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  const _ReminderRow({
+    required this.reminderAt,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final when = reminderAt;
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Icon(Icons.alarm, size: 16, color: Colors.white.withValues(alpha: 0.5)),
+              const SizedBox(width: 8),
+              Text(
+                when == null
+                    ? 'No reminder set'
+                    : DateFormat('MMM d, HH:mm').format(when),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: Colors.white.withValues(alpha: 0.65),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (when != null)
+          TextButton(onPressed: onClear, child: const Text('Remove')),
+        TextButton.icon(
+          onPressed: onPick,
+          icon: const Icon(Icons.alarm_add, size: 18),
+          label: Text(when == null ? 'Set' : 'Change'),
+        ),
+      ],
     );
   }
 }
@@ -382,8 +605,7 @@ class _PnLBlock extends StatelessWidget {
         ),
         ResultRow(
           label: 'Unrealized P&L',
-          value:
-              '\$${Format.signedMoney(pnl)}（${Format.signedPercent(pct)}）',
+          value: '\$${Format.signedMoney(pnl)}（${Format.signedPercent(pct)}）',
           valueColor: pnlColor(pnl),
           emphasize: true,
         ),
@@ -394,6 +616,7 @@ class _PnLBlock extends StatelessWidget {
 
 class _EmptyTransactions extends StatelessWidget {
   final VoidCallback onAdd;
+
   const _EmptyTransactions({required this.onAdd});
 
   @override
@@ -497,11 +720,7 @@ class _TransactionTile extends StatelessWidget {
           const SizedBox(width: 4),
           IconButton(
             onPressed: onDelete,
-            icon: Icon(
-              Icons.close,
-              size: 18,
-              color: Colors.white.withValues(alpha: 0.45),
-            ),
+            icon: Icon(Icons.close, size: 18, color: Colors.white.withValues(alpha: 0.45)),
           ),
         ],
       ),

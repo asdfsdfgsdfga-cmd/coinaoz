@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../core/agreement.dart';
 import '../screens/privacy_policy_screen.dart';
 import '../theme.dart';
 
 /// 首页「风险与隐私提示」弹窗。
 ///
 /// - 展示风险免责声明；
-/// - 「《隐私政策》」可点击，跳转加载 H5；
+/// - 「Privacy Policy」可点击，打开应用内原生隐私政策页；
 /// - 返回 true 表示用户同意并继续。
 class AgreementDialog extends StatelessWidget {
   final VoidCallback onAgree;
@@ -49,11 +48,7 @@ class AgreementDialog extends StatelessWidget {
   }
 
   void _openPrivacy(BuildContext context) {
-    PrivacyPolicyScreen.open(
-      context,
-      url: AppAgreement.privacyUrl,
-      title: AppAgreement.privacyTitle,
-    );
+    PrivacyPolicyScreen.open(context);
   }
 
   @override
@@ -135,7 +130,7 @@ class AgreementDialog extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                // 点击跳转加载隐私政策 H5
+                // 点击打开应用内原生隐私政策页
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => _openPrivacy(context),

@@ -3,21 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/agreement.dart';
+import 'core/reminder_service.dart';
 import 'screens/average_cost_screen.dart';
-import 'screens/h5_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/tools_screen.dart';
 import 'screens/tp_sl_screen.dart';
 import 'theme.dart';
 import 'widgets/agreement_dialog.dart';
 
-/// 隐藏入口 H5 地址。
-const String _h5Url = 'https://asdfsdfgsdfga-cmd.github.io/library/about.html';
-
-/// 本地缓存 H5 地址的键。
-const String _h5UrlKey = 'h5_launch_url';
-
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ReminderService.instance.init();
   runApp(const CoinAozxApp());
 }
 
@@ -45,16 +41,6 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _index = 0;
 
-  /// 是否进入 H5 全屏模式（激活后 / 缓存命中后）。
-  bool _showH5 = false;
-
-  /// 当前要加载的 H5 地址。
-  String _h5UrlValue = _h5Url;
-
-  /// 三连击检测。
-  int _titleTapCount = 0;
-  DateTime? _lastTitleTap;
-
   late final List<Widget> _pages = [
     HomeScreen(onOpen: (i) => setState(() => _index = i)),
     const AverageCostScreen(),
@@ -65,21 +51,7 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
-    // 首帧后：优先检查是否已缓存 H5 地址，命中则直接进入 H5；否则走协议流程。
-    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
-  }
-
-  Future<void> _bootstrap() async {
-    final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString(_h5UrlKey);
-    if (cached != null && cached.isNotEmpty && mounted) {
-      setState(() {
-        _h5UrlValue = cached;
-        _showH5 = true;
-      });
-      return;
-    }
-    await _maybeShowAgreement();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowAgreement());
   }
 
   Future<void> _maybeShowAgreement() async {
@@ -97,39 +69,8 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  /// 连续点击三次应用名称触发：记录缓存并加载 H5。
-  void _onTitleTap() {
-    final now = DateTime.now();
-    if (_lastTitleTap != null &&
-        now.difference(_lastTitleTap!) > const Duration(milliseconds: 600)) {
-      _titleTapCount = 0;
-    }
-    _titleTapCount++;
-    _lastTitleTap = now;
-
-    if (_titleTapCount >= 3) {
-      _titleTapCount = 0;
-      _activateH5();
-    }
-  }
-
-  Future<void> _activateH5() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_h5UrlKey, _h5Url);
-    if (!mounted) return;
-    setState(() {
-      _h5UrlValue = _h5Url;
-      _showH5 = true;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    // 激活后 / 再次打开时：直接全屏加载 H5。
-    if (_showH5) {
-      return H5Screen(url: _h5UrlValue);
-    }
-
     return Scaffold(
       appBar: _buildAppBar(),
       body: IndexedStack(index: _index, children: _pages),
@@ -140,29 +81,24 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  /// 固定在顶部的状态栏：应用名称，连续点击三次触发隐藏 H5。
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       titleSpacing: 16,
-      title: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _onTitleTap,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.asset(
-                'assets/branding/logo.png',
-                width: 32,
-                height: 32,
-                fit: BoxFit.cover,
-              ),
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.asset(
+              'assets/branding/logo.png',
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
             ),
-            const SizedBox(width: 10),
-            const Text('CoinAOZX FS'),
-          ],
-        ),
+          ),
+          const SizedBox(width: 10),
+          const Text('CoinAOZX FS'),
+        ],
       ),
     );
   }

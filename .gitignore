@@ -1,0 +1,35 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+.flutter/
+.fvm/
+**/ephemeral/
+**/GeneratedPluginRegistrant.*
+
+# Generated / native build artifacts
+*.app
+*.apk
+*.aab
+*.ipa
+*.toolkit
+
+# Signing & secrets
+*.keystore
+*.jks
+*.pem
+*.p12
+*.mobileprovision
+*.cer
+*.csr
+
+# Misc
+*.class
+*.log
+*.pyc
+*.rar
+*.tmp
+*.zip
+.DS_Store

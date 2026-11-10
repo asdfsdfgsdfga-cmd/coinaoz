@@ -343,7 +343,7 @@ class AboutCard extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              Text('Version 1.0.0', style: _small),
+              Text('Version 1.0.1', style: _small),
               const SizedBox(width: 16),
               Text('Built with Flutter', style: _small),
             ],

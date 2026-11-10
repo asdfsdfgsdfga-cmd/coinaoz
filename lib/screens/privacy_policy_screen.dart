@@ -1,182 +1,117 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
-import '../theme.dart';
+/// 应用内原生隐私政策页面（静态文案，无外链、无 WebView）。
+class PrivacyPolicyScreen extends StatelessWidget {
+  const PrivacyPolicyScreen({super.key});
 
-/// 应用内 H5 页面（隐私政策等外链）。
-///
-/// - Android / iOS：使用系统 WebView 内嵌加载；
-/// - Web 及不支持的平台：提供跳转外部浏览器按钮。
-class PrivacyPolicyScreen extends StatefulWidget {
-  final String url;
-  final String title;
-
-  const PrivacyPolicyScreen({super.key, required this.url, required this.title});
-
-  /// 当前平台是否有可用的内嵌 WebView。
-  static bool get supportsEmbeddedWebView =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
-
-  static void open(
-    BuildContext context, {
-    required String url,
-    required String title,
-  }) {
+  static void open(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PrivacyPolicyScreen(url: url, title: title),
+        builder: (_) => const PrivacyPolicyScreen(),
       ),
     );
   }
 
   @override
-  State<PrivacyPolicyScreen> createState() => _PrivacyPolicyScreenState();
-}
-
-class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
-  WebViewController? _controller;
-  int _progress = 0;
-  bool _loading = true;
-
-  Uri get _uri => Uri.parse(widget.url);
-
-  @override
-  void initState() {
-    super.initState();
-    if (!PrivacyPolicyScreen.supportsEmbeddedWebView) return;
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(AppTheme.background)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (value) {
-            if (!mounted) return;
-            setState(() => _progress = value);
-          },
-          onPageStarted: (_) {
-            if (!mounted) return;
-            setState(() => _loading = true);
-          },
-          onPageFinished: (_) {
-            if (!mounted) return;
-            setState(() {
-              _loading = false;
-              _progress = 100;
-            });
-          },
-        ),
-      )
-      ..loadRequest(_uri);
-  }
-
-  Future<void> _openInBrowser() async {
-    final ok = await launchUrl(_uri, mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open browser')),
-      );
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final embedded = _controller != null;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          IconButton(
-            tooltip: 'Open in browser',
-            onPressed: _openInBrowser,
-            icon: const Icon(Icons.open_in_new_rounded, size: 20),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: embedded
-          ? Column(
-              children: [
-                if (_loading)
-                  LinearProgressIndicator(
-                    value: _progress <= 0 || _progress >= 100
-                        ? null
-                        : _progress / 100,
-                    minHeight: 2,
-                    backgroundColor: AppTheme.surface,
-                    color: AppTheme.accent,
-                  )
-                else
-                  const SizedBox(height: 2),
-                Expanded(child: WebViewWidget(controller: _controller!)),
-              ],
-            )
-          : _UnsupportedView(uri: _uri, onOpen: _openInBrowser),
-    );
-  }
-}
-
-class _UnsupportedView extends StatelessWidget {
-  final Uri uri;
-  final VoidCallback onOpen;
-
-  const _UnsupportedView({required this.uri, required this.onOpen});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 58,
-              height: 58,
-              decoration: BoxDecoration(
-                color: AppTheme.accent.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: const Icon(
-                Icons.public_rounded,
-                size: 28,
-                color: AppTheme.accent,
-              ),
+      appBar: AppBar(title: const Text('Privacy Policy')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          children: const [
+            _Section(
+              title: 'Summary',
+              body:
+                  'CoinAOZX FS is a local-first set of trading calculators for '
+                  'average cost, take-profit/stop-loss, profit/loss and position '
+                  'sizing. The app does not require an account, does not collect '
+                  'personal information, and does not transmit your inputs to any '
+                  'server.',
             ),
-            const SizedBox(height: 18),
-            const Text(
-              'Privacy Policy',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
+            _Section(
+              title: 'Information Stored On Your Device',
+              body:
+                  'Prices, quantities, asset names and any other entries you type '
+                  'are saved only on this device through local storage (shared '
+                  'preferences) so your inputs are still available after you close '
+                  'the app. You can erase these records at any time by using the '
+                  'in-app clear controls or by deleting the app.',
             ),
-            const SizedBox(height: 8),
-            Text(
-              uri.toString(),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 12,
-                height: 1.6,
-              ),
+            _Section(
+              title: 'Data Collection & Sharing',
+              body:
+                  'We do not collect, transmit, sell or share your personal data or '
+                  'calculation inputs. The app contains no advertising SDK, no '
+                  'analytics or crash-reporting SDK, and no account or social-login '
+                  'feature.',
             ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: onOpen,
-                icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                label: const Text('Open in browser'),
-              ),
+            _Section(
+              title: 'No Real-Time Market Data',
+              body:
+                  'The app has no connection to any exchange or price feed. All '
+                  'prices shown come from values you enter yourself, and every '
+                  'result is a manual calculation only. Nothing in the app constitutes '
+                  'investment advice.',
+            ),
+            _Section(
+              title: 'Third-Party Services',
+              body:
+                  'The app uses the Flutter framework and standard system '
+                  'capabilities only. It does not embed any third-party web page, '
+                  'content library or remote service.',
+            ),
+            _Section(
+              title: 'Children’s Privacy',
+              body:
+                  'This app is not directed at children under 13, and it does not '
+                  'knowingly collect any personal information.',
+            ),
+            _Section(
+              title: 'Contact',
+              body:
+                  'If you have questions about this privacy policy, please contact '
+                  'the developer through the contact channel listed on the App '
+                  'Store product page.',
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  final String title;
+  final String body;
+
+  const _Section({required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            body,
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.6,
+              color: Colors.white.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
       ),
     );
   }
